@@ -165,7 +165,7 @@ const main = async () => {
   const currentYear = nowDate.getFullYear();
 
   let violationSummary = "";
-  const violationParagraphs: string[] = [];
+  const locationViolations: Record<string, string[]> = {};
 
   // Fetch all locations and users for mapping
   const allLocations = await prisma.location.findMany();
@@ -184,17 +184,18 @@ const main = async () => {
 
   for (const [locId, orders] of Object.entries(ordersByLocation)) {
     // Rule 1: More than one future order
-    const futureOrders = orders.filter((o) => o.start > nowDate);
+    const futureOrders = orders
+      .filter((o) => o.start > nowDate)
+      .sort(
+        (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime()
+      );
     if (futureOrders.length > 1) {
-      const msg = `Rule violation: ${
-        locationMap[locId] || `Location #${locId}`
-      } has more than one future booking.`;
       const details = futureOrders
         .map(
           (o) =>
-            `Booking #${o.id} (User: ${
-              userMap[o.userId] || o.userId
-            }, Start: ${new Date(o.start).toLocaleString("en-GB", {
+            `(${userMap[o.userId] || o.userId}, ${new Date(
+              o.start
+            ).toLocaleString("en-GB", {
               year: "numeric",
               month: "2-digit",
               day: "2-digit",
@@ -203,24 +204,25 @@ const main = async () => {
               hour12: false,
             })})`
         )
-        .join("<br>");
-      violationParagraphs.push(`<p>${msg}<br>${details}</p>`);
-      console.log(msg + " " + details.replace(/<br>/g, ", "));
+        .join(" ");
+      const msg = `Has more than one future booking ${details}`;
+      if (!locationViolations[locId]) locationViolations[locId] = [];
+      locationViolations[locId].push(`${msg}`);
+      console.log(`${locationMap[locId] || `Location #${locId}`}: ${msg}`);
     }
     // Rule 2: More than 2 orders per year
-    const ordersThisYear = orders.filter(
-      (o) => new Date(o.start).getFullYear() === currentYear
-    );
+    const ordersThisYear = orders
+      .filter((o) => new Date(o.start).getFullYear() === currentYear)
+      .sort(
+        (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime()
+      );
     if (ordersThisYear.length > 2) {
-      const msg = `Rule violation: ${
-        locationMap[locId] || `Location #${locId}`
-      } has more than 2 bookings in ${currentYear}.`;
       const details = ordersThisYear
         .map(
           (o) =>
-            `Booking #${o.id} (User: ${
-              userMap[o.userId] || o.userId
-            }, Start: ${new Date(o.start).toLocaleString("en-GB", {
+            `(${userMap[o.userId] || o.userId}, ${new Date(
+              o.start
+            ).toLocaleString("en-GB", {
               year: "numeric",
               month: "2-digit",
               day: "2-digit",
@@ -229,24 +231,28 @@ const main = async () => {
               hour12: false,
             })})`
         )
-        .join("<br>");
-      violationParagraphs.push(`<p>${msg}<br>${details}</p>`);
-      console.log(msg + " " + details.replace(/<br>/g, ", "));
+        .join(" ");
+      const msg = `Has more than 2 bookings in ${currentYear} ${details}`;
+      if (!locationViolations[locId]) locationViolations[locId] = [];
+      locationViolations[locId].push(`${msg}`);
+      console.log(`${locationMap[locId] || `Location #${locId}`}: ${msg}`);
     }
   }
 
   // Rule 3: locationId > 39 is not allowed to have orders
   for (const [locId, orders] of Object.entries(ordersByLocation)) {
-    if (Number(locId) > 39 && orders.length > 0) {
-      const msg = `Rule violation: ${
-        locationMap[locId] || `Location #${locId}`
-      } is not allowed to have bookings.`;
-      const details = orders
+    const sortedOrders = orders
+      .slice()
+      .sort(
+        (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime()
+      );
+    if (Number(locId) > 39 && sortedOrders.length > 0) {
+      const details = sortedOrders
         .map(
           (o) =>
-            `Booking #${o.id} (User: ${
-              userMap[o.userId] || o.userId
-            }, Start: ${new Date(o.start).toLocaleString("en-GB", {
+            `(${userMap[o.userId] || o.userId}, ${new Date(
+              o.start
+            ).toLocaleString("en-GB", {
               year: "numeric",
               month: "2-digit",
               day: "2-digit",
@@ -255,10 +261,22 @@ const main = async () => {
               hour12: false,
             })})`
         )
-        .join("<br>");
-      violationParagraphs.push(`<p>${msg}<br>${details}</p>`);
-      console.log(msg + " " + details.replace(/<br>/g, ", "));
+        .join(" ");
+      const msg = `Is not allowed to have bookings ${details}`;
+      if (!locationViolations[locId]) locationViolations[locId] = [];
+      locationViolations[locId].push(`${msg}`);
+      console.log(`${locationMap[locId] || `Location #${locId}`}: ${msg}`);
     }
+  }
+
+  // Build grouped violation paragraphs
+  const violationParagraphs: string[] = [];
+  for (const [locId, violations] of Object.entries(locationViolations)) {
+    violationParagraphs.push(
+      `<p><b>${
+        locationMap[locId] || `Location #${locId}`
+      }</b><br>${violations.join("<br>")}</p>`
+    );
   }
 
   // Post violation summary to group if there are violations
