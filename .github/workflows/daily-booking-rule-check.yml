@@ -23,4 +23,5 @@ jobs:
           HEYNABO_EMAIL: ${{ secrets.HEYNABO_EMAIL }}
           HEYNABO_PASSWORD: ${{ secrets.HEYNABO_PASSWORD }}
           HEYNABO_BOOKING_ID: ${{ secrets.HEYNABO_BOOKING_ID }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: bun run index.ts
