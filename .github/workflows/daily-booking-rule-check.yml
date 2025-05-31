@@ -1,0 +1,26 @@
+name: Daily Booking Rule Check
+
+on:
+  schedule:
+    - cron: "0 20 * * *"
+  workflow_dispatch:
+
+jobs:
+  run-booking-rule-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+      - name: Install dependencies
+        run: bun install
+      - name: Run booking rule check script
+        env:
+          HEYNABO_HOST: ${{ secrets.HEYNABO_HOST }}
+          HEYNABO_EMAIL: ${{ secrets.HEYNABO_EMAIL }}
+          HEYNABO_PASSWORD: ${{ secrets.HEYNABO_PASSWORD }}
+          HEYNABO_BOOKING_ID: ${{ secrets.HEYNABO_BOOKING_ID }}
+        run: bun run index.ts
