@@ -129,16 +129,22 @@ const main = async () => {
     },
   });
   for (const order of previouslyActiveOrders) {
+    const now = new Date();
+    const orderEnd = new Date(order.end);
+    let newStatus = "INACTIVE";
+    if (now < orderEnd) {
+      newStatus = "DELETED";
+    }
     console.log(
       `Order ${
         order.id
-      } is no longer ACTIVE (last seen at ${order.lastSeenActiveAt?.toISOString()})`
+      } is no longer ACTIVE (last seen at ${order.lastSeenActiveAt?.toISOString()}) - setting status to ${newStatus}`
     );
-    // Update the order to set ACTIVE status to INACTIVE
+    // Update the order to set status
     await prisma.order.update({
       where: { id: order.id },
       data: {
-        status: "INACTIVE",
+        status: newStatus,
       },
     });
   }
@@ -146,6 +152,7 @@ const main = async () => {
   // --- ENFORCE BOOKING/ORDER RULES ---
   // 1. No locationId (from user) can have more than one future order
   // 2. No locationId (from user) can have more than 2 orders per year
+  // 3. No locationId > 39 is allowed to have orders
 
   // Get all orders with their users and user.locationId
   const allOrders = await prisma.order.findMany({
@@ -164,7 +171,6 @@ const main = async () => {
   const nowDate = new Date();
   const currentYear = nowDate.getFullYear();
 
-  let violationSummary = "";
   const locationViolations: Record<string, string[]> = {};
 
   // Fetch all locations and users for mapping
