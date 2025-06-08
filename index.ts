@@ -126,6 +126,7 @@ const main = async () => {
     where: {
       lastSeenActiveAt: { not: null },
       id: { notIn: activeOrderIds },
+			status: "ACTIVE", // Only consider those that were ACTIVE
     },
   });
   for (const order of previouslyActiveOrders) {
@@ -157,6 +158,11 @@ const main = async () => {
   // Get all orders with their users and user.locationId
   const allOrders = await prisma.order.findMany({
     include: { user: true },
+		where: {
+			status: {
+				in: ["ACTIVE", "INACTIVE"],
+			},
+		},
   });
 
   // Group orders by user.locationId
@@ -169,7 +175,6 @@ const main = async () => {
   }
 
   const nowDate = new Date();
-  const currentYear = nowDate.getFullYear();
 
   const locationViolations: Record<string, string[]> = {};
 
@@ -180,7 +185,7 @@ const main = async () => {
   const locationMap = Object.fromEntries(
     allLocations.map((l) => [
       l.id,
-      `${l.address || ""}, ${l.city || ""}`.replace(/^, |, $/g, "") ||
+      `${l.address || ""}`.replace(/^, |, $/g, "") ||
         `Location #${l.id}`,
     ])
   );
@@ -196,52 +201,25 @@ const main = async () => {
         (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime()
       );
     if (futureOrders.length > 1) {
-      const details = futureOrders
-        .map(
-          (o) =>
-            `(${userMap[o.userId] || o.userId}, ${new Date(
-              o.start
-            ).toLocaleString("en-GB", {
-              year: "numeric",
-              month: "2-digit",
-              day: "2-digit",
-              hour: "2-digit",
-              minute: "2-digit",
-              hour12: false,
-            })})`
-        )
-        .join(" ");
-      const msg = `Has more than one future booking ${details}`;
+      const msg = `Has more than one future booking`;
       if (!locationViolations[locId]) locationViolations[locId] = [];
       locationViolations[locId].push(`${msg}`);
       console.log(`${locationMap[locId] || `Location #${locId}`}: ${msg}`);
     }
-    // Rule 2: More than 2 orders per year
-    const ordersThisYear = orders
-      .filter((o) => new Date(o.start).getFullYear() === currentYear)
-      .sort(
-        (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime()
-      );
-    if (ordersThisYear.length > 2) {
-      const details = ordersThisYear
-        .map(
-          (o) =>
-            `(${userMap[o.userId] || o.userId}, ${new Date(
-              o.start
-            ).toLocaleString("en-GB", {
-              year: "numeric",
-              month: "2-digit",
-              day: "2-digit",
-              hour: "2-digit",
-              minute: "2-digit",
-              hour12: false,
-            })})`
-        )
-        .join(" ");
-      const msg = `Has more than 2 bookings in ${currentYear} ${details}`;
-      if (!locationViolations[locId]) locationViolations[locId] = [];
-      locationViolations[locId].push(`${msg}`);
-      console.log(`${locationMap[locId] || `Location #${locId}`}: ${msg}`);
+    // Rule 2: More than 2 orders per year (any year)
+    const ordersByYear: Record<number, typeof orders> = {};
+    for (const o of orders) {
+      const year = new Date(o.start).getFullYear();
+      if (!ordersByYear[year]) ordersByYear[year] = [];
+      ordersByYear[year].push(o);
+    }
+    for (const [yearStr, yearOrders] of Object.entries(ordersByYear)) {
+      if (yearOrders.length > 2) {
+        const msg = `Has more than 2 bookings in ${yearStr}`;
+        if (!locationViolations[locId]) locationViolations[locId] = [];
+        locationViolations[locId].push(`${msg}`);
+        console.log(`${locationMap[locId] || `Location #${locId}`}: ${msg}`);
+      }
     }
   }
 
@@ -253,22 +231,8 @@ const main = async () => {
         (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime()
       );
     if (Number(locId) > 39 && sortedOrders.length > 0) {
-      const details = sortedOrders
-        .map(
-          (o) =>
-            `(${userMap[o.userId] || o.userId}, ${new Date(
-              o.start
-            ).toLocaleString("en-GB", {
-              year: "numeric",
-              month: "2-digit",
-              day: "2-digit",
-              hour: "2-digit",
-              minute: "2-digit",
-              hour12: false,
-            })})`
-        )
-        .join(" ");
-      const msg = `Is not allowed to have bookings ${details}`;
+
+      const msg = `Is not allowed to have bookings`;
       if (!locationViolations[locId]) locationViolations[locId] = [];
       locationViolations[locId].push(`${msg}`);
       console.log(`${locationMap[locId] || `Location #${locId}`}: ${msg}`);
@@ -278,37 +242,58 @@ const main = async () => {
   // Build grouped violation paragraphs
   const violationParagraphs: string[] = [];
   for (const [locId, violations] of Object.entries(locationViolations)) {
+    // Summarize all bookings for this location
+    const orders = ordersByLocation[Number(locId)] || [];
+    const summary = orders
+			.sort(
+				(a, b) => new Date(a.start).getTime() - new Date(b.start).getTime()
+			)
+      .map((o: any) =>
+        `${userMap[o.userId] || o.userId}, ${new Date(o.start).toLocaleString("en-GB", {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        })}`
+      )
+      .join("<br>");
     violationParagraphs.push(
-      `<p><b>${
-        locationMap[locId] || `Location #${locId}`
-      }</b><br>${violations.join("<br>")}</p>`
+      `<p><b>${locationMap[locId] || `Location #${locId}`}</b><br>${violations.map((v, i) => `${i + 1}. ${v}`).join("<br>")}${summary ? `<br><i>Bookings:<br/>${summary}</i>` : ""}</p>`
     );
   }
 
   // Post violation summary to group if there are violations
+  // Only post on Mondays
   if (violationParagraphs.length > 0) {
     const today = nowDate.toLocaleDateString("en-GB");
-    const postBody = {
-      headline: `<p>Current rule violations (${today})</p>`,
-      text: violationParagraphs.join("\n"),
-      groupId: "12",
-      public: false,
-    };
-    const postResp = await fetch(
-      `https://${process.env.HEYNABO_HOST}/api/members/posts`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${userData.token}`,
-        },
-        body: JSON.stringify(postBody),
+    const isMonday = nowDate.getDay() === 1; // 0 = Sunday, 1 = Monday
+    if (isMonday) {
+      const postBody = {
+        headline: `<p>Current rule violations (${today})</p>`,
+        text: violationParagraphs.join("\n"),
+        groupId: "8",
+        public: false,
+      };
+      const postResp = await fetch(
+        `https://${process.env.HEYNABO_HOST}/api/members/posts`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${userData.token}`,
+          },
+          body: JSON.stringify(postBody),
+        }
+      );
+      if (!postResp.ok) {
+        console.error("Failed to post violation summary:", await postResp.text());
+      } else {
+        console.log("Violation summary posted to group 8.");
       }
-    );
-    if (!postResp.ok) {
-      console.error("Failed to post violation summary:", await postResp.text());
     } else {
-      console.log("Violation summary posted to group 12.");
+      console.log("Today is not Monday, skipping post.");
     }
   }
   // --- END ENFORCE BOOKING/ORDER RULES ---
